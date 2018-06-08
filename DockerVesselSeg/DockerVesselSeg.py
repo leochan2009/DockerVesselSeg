@@ -3,7 +3,10 @@ import unittest
 import vtk, qt, ctk, slicer
 from slicer.ScriptedLoadableModule import *
 import logging
-
+import platform
+import subprocess
+import shutil
+import threading
 #
 # DockerVesselSeg
 #
@@ -42,6 +45,34 @@ class DockerVesselSegWidget(ScriptedLoadableModuleWidget):
     ScriptedLoadableModuleWidget.setup(self)
 
     # Instantiate and connect widgets ...
+
+
+    self.dockerGroupBox = ctk.ctkCollapsibleGroupBox()
+    self.dockerGroupBox.setTitle('Docker Settings')
+    self.layout.addWidget(self.dockerGroupBox)
+    dockerForm = qt.QFormLayout(self.dockerGroupBox)
+    self.dockerPath = ctk.ctkPathLineEdit()
+    # self.dockerPath.setMaximumWidth(300)
+    if platform.system() == 'Darwin':
+      self.dockerPath.setCurrentPath('/usr/local/bin/docker')
+    if platform.system() == 'Linux':
+      self.dockerPath.setCurrentPath('/usr/bin/docker')
+    if platform.system() == 'Windows':
+      self.dockerPath.setCurrentPath("C:/Program Files/Docker/Docker/resources/bin/docker.exe")
+
+    ### use nvidia-docker if it is installed
+    nvidiaDockerPath = self.dockerPath.currentPath.replace('bin/docker', 'bin/nvidia-docker')
+    if os.path.isfile(nvidiaDockerPath):
+      self.dockerPath.setCurrentPath(nvidiaDockerPath)
+
+    self.downloadButton = qt.QPushButton('Download')
+    self.downloadButton.connect('clicked(bool)', self.onDownloadButton)
+    dockerForm.addRow("Docker Executable Path:", self.dockerPath)
+    dockerForm.addRow("Download the docker image:", self.downloadButton)
+    self.progressDownload = qt.QProgressBar()
+    self.progressDownload.setRange(0, 100)
+    self.progressDownload.setValue(0)
+    self.progressDownload.hide()
 
     #
     # Parameters Area
@@ -84,25 +115,6 @@ class DockerVesselSegWidget(ScriptedLoadableModuleWidget):
     parametersFormLayout.addRow("Output Volume: ", self.outputSelector)
 
     #
-    # threshold value
-    #
-    self.imageThresholdSliderWidget = ctk.ctkSliderWidget()
-    self.imageThresholdSliderWidget.singleStep = 0.1
-    self.imageThresholdSliderWidget.minimum = -100
-    self.imageThresholdSliderWidget.maximum = 100
-    self.imageThresholdSliderWidget.value = 0.5
-    self.imageThresholdSliderWidget.setToolTip("Set threshold value for computing the output image. Voxels that have intensities lower than this value will set to zero.")
-    parametersFormLayout.addRow("Image threshold", self.imageThresholdSliderWidget)
-
-    #
-    # check box to trigger taking screen shots for later use in tutorials
-    #
-    self.enableScreenshotsFlagCheckBox = qt.QCheckBox()
-    self.enableScreenshotsFlagCheckBox.checked = 0
-    self.enableScreenshotsFlagCheckBox.setToolTip("If checked, take screen shots for tutorials. Use Save Data to write them to disk.")
-    parametersFormLayout.addRow("Enable Screenshots", self.enableScreenshotsFlagCheckBox)
-
-    #
     # Apply Button
     #
     self.applyButton = qt.QPushButton("Apply")
@@ -127,11 +139,47 @@ class DockerVesselSegWidget(ScriptedLoadableModuleWidget):
   def onSelect(self):
     self.applyButton.enabled = self.inputSelector.currentNode() and self.outputSelector.currentNode()
 
+  def onDownloadButton(self):
+    resoponse = qt.QMessageBox.question(None, "Download", "The size of the selected image to download is 590 MB. Are you sure you want to proceed?", qt.QMessageBox.Yes, qt.QMessageBox.No) == qt.QMessageBox.Yes
+    if resoponse:
+      cmd = []
+      cmd.append(self.dockerPath.currentPath)
+      cmd.append('pull')
+      cmd.append("li3igtlab/brain-vessel-seg" + '@' + "f5b58cc46f2868d572f214796bc663ecf8e94296dcb36c02406d64269f44130b")
+      p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+      print(cmd)
+      parts = dict()
+      try:
+        while True:
+          self.progressDownload.show()
+          slicer.app.processEvents()
+          line = p.stdout.readline()
+          if not line:
+            break
+          line = line.rstrip()
+          print(line)
+          part = line.split(':')[0]
+          if len(part) == 12:
+            parts[part] = line.split(':')[1]
+          if parts.keys():
+            print('-' * 100)
+            print(parts)
+            n_parts = len(parts.keys())
+            n_completed = len([status for status in parts.values() if status == ' Pull complete'])
+            self.progressDownload.setValue(int((100 * n_completed) / n_parts))
+
+      except Exception as e:
+        print("Exception: {}".format(e))
+      print(parts)
+      self.progressDownload.setValue(0)
+      self.progressDownload.hide()
+    else:
+      print("Download was canceled!")
+
+
   def onApplyButton(self):
     logic = DockerVesselSegLogic()
-    enableScreenshotsFlag = self.enableScreenshotsFlagCheckBox.checked
-    imageThreshold = self.imageThresholdSliderWidget.value
-    logic.run(self.inputSelector.currentNode(), self.outputSelector.currentNode(), imageThreshold, enableScreenshotsFlag)
+    logic.run(self.inputSelector.currentNode(), self.outputSelector.currentNode())
 
 #
 # DockerVesselSegLogic
@@ -174,42 +222,6 @@ class DockerVesselSegLogic(ScriptedLoadableModuleLogic):
       return False
     return True
 
-  def takeScreenshot(self,name,description,type=-1):
-    # show the message even if not taking a screen shot
-    slicer.util.delayDisplay('Take screenshot: '+description+'.\nResult is available in the Annotations module.', 3000)
-
-    lm = slicer.app.layoutManager()
-    # switch on the type to get the requested window
-    widget = 0
-    if type == slicer.qMRMLScreenShotDialog.FullLayout:
-      # full layout
-      widget = lm.viewport()
-    elif type == slicer.qMRMLScreenShotDialog.ThreeD:
-      # just the 3D window
-      widget = lm.threeDWidget(0).threeDView()
-    elif type == slicer.qMRMLScreenShotDialog.Red:
-      # red slice window
-      widget = lm.sliceWidget("Red")
-    elif type == slicer.qMRMLScreenShotDialog.Yellow:
-      # yellow slice window
-      widget = lm.sliceWidget("Yellow")
-    elif type == slicer.qMRMLScreenShotDialog.Green:
-      # green slice window
-      widget = lm.sliceWidget("Green")
-    else:
-      # default to using the full window
-      widget = slicer.util.mainWindow()
-      # reset the type so that the node is set correctly
-      type = slicer.qMRMLScreenShotDialog.FullLayout
-
-    # grab and convert to vtk image data
-    qimage = ctk.ctkWidgetsUtils.grabWidget(widget)
-    imageData = vtk.vtkImageData()
-    slicer.qMRMLUtils().qImageToVtkImageData(qimage,imageData)
-
-    annotationLogic = slicer.modules.annotations.logic()
-    annotationLogic.CreateSnapShot(name, description, type, 1, imageData)
-
   def run(self, inputVolume, outputVolume, imageThreshold, enableScreenshots=0):
     """
     Run the actual algorithm
@@ -224,10 +236,6 @@ class DockerVesselSegLogic(ScriptedLoadableModuleLogic):
     # Compute the thresholded output volume using the Threshold Scalar Volume CLI module
     cliParams = {'InputVolume': inputVolume.GetID(), 'OutputVolume': outputVolume.GetID(), 'ThresholdValue' : imageThreshold, 'ThresholdType' : 'Above'}
     cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True)
-
-    # Capture screenshot
-    if enableScreenshots:
-      self.takeScreenshot('DockerVesselSegTest-Start','MyScreenshot',-1)
 
     logging.info('Processing completed')
 
