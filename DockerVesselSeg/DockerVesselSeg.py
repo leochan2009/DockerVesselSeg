@@ -97,53 +97,70 @@ class DockerVesselSegWidget(ScriptedLoadableModuleWidget):
     #
     # input volume selector
     #
-    self.inputSelector = slicer.qMRMLNodeComboBox()
-    self.inputSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
-    self.inputSelector.selectNodeUponCreation = True
-    self.inputSelector.addEnabled = False
-    self.inputSelector.removeEnabled = False
-    self.inputSelector.noneEnabled = False
-    self.inputSelector.showHidden = False
-    self.inputSelector.showChildNodeTypes = False
-    self.inputSelector.setMRMLScene( slicer.mrmlScene )
-    self.inputSelector.setToolTip( "Pick the input to the algorithm." )
-    parametersFormLayout.addRow("Input Volume: ", self.inputSelector)
-
-    #
-    # output vessel model selector
-    #
-    self.outputSelector = slicer.qMRMLNodeComboBox()
-    self.outputSelector.nodeTypes = ["vtkMRMLModelNode"]
-    self.outputSelector.selectNodeUponCreation = True
-    self.outputSelector.addEnabled = True
-    self.outputSelector.removeEnabled = True
-    self.outputSelector.noneEnabled = True
-    self.outputSelector.showHidden = False
-    self.outputSelector.showChildNodeTypes = False
-    self.outputSelector.setMRMLScene( slicer.mrmlScene )
-    self.outputSelector.setToolTip( "Pick the output to the algorithm." )
-    parametersFormLayout.addRow("Output vessel model: ", self.outputSelector)
+    self.inputVolumeSelector = slicer.qMRMLNodeComboBox()
+    self.inputVolumeSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
+    self.inputVolumeSelector.selectNodeUponCreation = True
+    self.inputVolumeSelector.addEnabled = False
+    self.inputVolumeSelector.removeEnabled = False
+    self.inputVolumeSelector.noneEnabled = False
+    self.inputVolumeSelector.showHidden = False
+    self.inputVolumeSelector.showChildNodeTypes = False
+    self.inputVolumeSelector.setMRMLScene( slicer.mrmlScene )
+    self.inputVolumeSelector.setCurrentNode(None)
+    self.inputVolumeSelector.setToolTip( "Pick the input to the algorithm." )
+    parametersFormLayout.addRow("Input Volume: ", self.inputVolumeSelector)
 
     #
     # Apply Button
     #
-    self.applyButton = qt.QPushButton("Apply")
-    self.applyButton.toolTip = "Run the algorithm."
+    self.applyButton = qt.QPushButton("Generate Probablity Map")
+    self.applyButton.toolTip = "Generate the probablity map."
     self.applyButton.enabled = False
     parametersFormLayout.addRow(self.applyButton)
 
+    #
+    # output vessel model selector
+    #
+    self.outputModelSelector = slicer.qMRMLNodeComboBox()
+    self.outputModelSelector.nodeTypes = ["vtkMRMLModelNode"]
+    self.outputModelSelector.selectNodeUponCreation = True
+    self.outputModelSelector.addEnabled = True
+    self.outputModelSelector.removeEnabled = True
+    self.outputModelSelector.noneEnabled = True
+    self.outputModelSelector.showHidden = False
+    self.outputModelSelector.showChildNodeTypes = False
+    self.outputModelSelector.setMRMLScene( slicer.mrmlScene )
+    self.outputModelSelector.setToolTip( "Pick the output to the algorithm." )
+    parametersFormLayout.addRow("Output vessel model: ", self.outputModelSelector)
+
+    #
+    # threshold value
+    #
+    self.imageThresholdSliderWidget = ctk.ctkSliderWidget()
+    self.imageThresholdSliderWidget.singleStep = 0.01
+    self.imageThresholdSliderWidget.minimum = 0.5
+    self.imageThresholdSliderWidget.maximum = 1.0
+    self.imageThresholdSliderWidget.value = 0.9
+    self.imageThresholdSliderWidget.setToolTip("Set threshold value for computing the output image. Voxels that have intensities lower than this value will set to zero.")
+    parametersFormLayout.addRow("Image threshold", self.imageThresholdSliderWidget)
+
+
+    self.createVesselModelButton = qt.QPushButton("Create Vessel Model")
+    self.createVesselModelButton.toolTip = "Generate the vessel model."
+    self.createVesselModelButton.enabled = False
+    parametersFormLayout.addRow(self.createVesselModelButton)
+
+
     # connections
     self.applyButton.connect('clicked(bool)', self.onApplyButton)
-    self.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSelect)
-    self.outputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSelect)
+    self.createVesselModelButton.connect('clicked(bool)', self.onCreateModelWithThreshold)
+    self.inputVolumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSelectVolume)
+    self.outputModelSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSelectModel)
 
     # Add vertical spacer
     self.layout.addStretch(1)
 
     self.logic = DockerVesselSegLogic()
-
-    # Refresh Apply button state
-    self.onSelect()
 
   def cleanup(self):
     pass
@@ -155,8 +172,11 @@ class DockerVesselSegWidget(ScriptedLoadableModuleWidget):
     self.logic.clear()
     globals()[moduleName] = slicer.util.reloadScriptedModule(moduleName)
 
-  def onSelect(self):
-    self.applyButton.enabled = self.inputSelector.currentNode() and self.outputSelector.currentNode()
+  def onSelectVolume(self):
+    self.applyButton.enabled = self.inputVolumeSelector.currentNode()
+
+  def onSelectModel(self):
+    self.createVesselModelButton.enabled = (self.inputVolumeSelector.currentNode() and self.outputModelSelector.currentNode())
 
   def onDownloadButton(self):
     resoponse = qt.QMessageBox.question(None, "Download", "The size of the selected image to download is 590 MB. Are you sure you want to proceed?", qt.QMessageBox.Yes, qt.QMessageBox.No) == qt.QMessageBox.Yes
@@ -197,8 +217,11 @@ class DockerVesselSegWidget(ScriptedLoadableModuleWidget):
 
 
   def onApplyButton(self):
-    self.logic.run(self.dockerPath.currentPath, self.dockerVolumePath.currentPath, self.inputSelector.currentNode(), self.outputSelector.currentNode())
+    self.logic.run(self.dockerPath.currentPath, self.dockerVolumePath.currentPath, self.inputVolumeSelector.currentNode())
 
+
+  def onCreateModelWithThreshold(self):
+    self.logic.createModelWithThreshold(self.inputVolumeSelector.currentNode(), self.outputModelSelector.currentNode())
 #
 # DockerVesselSegLogic
 #
@@ -213,9 +236,9 @@ class DockerVesselSegLogic(ScriptedLoadableModuleLogic):
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
   DOCKERVOLUMEDIMENSION = [512.0,192.0,128.0]
+  REL_PROBABLITYMAP = "vtkMRMLScalarVolumeNode.rel_probabilityMap"
   def __init__(self):
-    self.resampledVolume = slicer.mrmlScene.CreateNodeByClass("vtkMRMLScalarVolumeNode")
-    slicer.mrmlScene.AddNode(self.resampledVolume)
+    self.resampledVolume = None
 
   def clear(self):
     if self.resampledVolume:
@@ -236,45 +259,36 @@ class DockerVesselSegLogic(ScriptedLoadableModuleLogic):
       return False
     return True
 
-  def isValidInputOutputData(self, inputVolumeNode, outputModel):
+  def isValidInputOutputData(self, inputVolumeNode):
     """Validates if the output is not the same as input
     """
     if not inputVolumeNode:
       logging.debug('isValidInputOutputData failed: no input volume node defined')
       return False
-    if not outputModel:
-      logging.debug('isValidInputOutputData failed: no output vessel model node defined')
-      return False
     return True
 
-  def run(self, dockerPath, dockerVolumePath, inputVolume, outputModel):
+  def run(self, dockerPath, dockerVolumePath, inputVolume):
     """
     Run the actual algorithm
     """
-
-    if not self.isValidInputOutputData(inputVolume, outputModel):
+    qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+    if not self.isValidInputOutputData(inputVolume):
       slicer.util.errorDisplay('Input volume is the same as output vessel model. Choose a different output vessel model.')
       return False
     slicer.app.processEvents()
     fileList = os.listdir(dockerVolumePath)
     for fileName in fileList:
       os.remove(os.path.join(dockerVolumePath, fileName))
-    parameters = {}
-    parameters["InputVolume"] = inputVolume.GetID()
-    inputVolumeDim = inputVolume.GetImageData().GetDimensions()
+    oriVolumeDim = inputVolume.GetImageData().GetDimensions()
     inputVolumeSpacing = inputVolume.GetSpacing()
-    parameters["outputPixelSpacing"] = "%.5f,%.5f,%.5f"%(inputVolumeSpacing[0]*inputVolumeDim[0]/self.DOCKERVOLUMEDIMENSION[0], \
-                                                         inputVolumeSpacing[1]*inputVolumeDim[1]/self.DOCKERVOLUMEDIMENSION[1], \
-                                                         inputVolumeSpacing[2]*inputVolumeDim[2]/self.DOCKERVOLUMEDIMENSION[2])
-    parameters["OutputVolume"]= self.resampledVolume.GetID()
-    resampleModule = slicer.modules.resamplescalarvolume
-    slicer.cli.run(resampleModule, None, parameters, wait_for_completion=True)
-    slicer.app.processEvents()
+    spacing = (inputVolumeSpacing[0] * oriVolumeDim[0] / self.DOCKERVOLUMEDIMENSION[0], \
+               inputVolumeSpacing[1] * oriVolumeDim[1] / self.DOCKERVOLUMEDIMENSION[1], \
+              inputVolumeSpacing[2] * oriVolumeDim[2] / self.DOCKERVOLUMEDIMENSION[2])
+    self.resampledVolume = self.ResampleVolume(inputVolume,spacing,self.resampledVolume)
     img = sitk.ReadImage(sitkUtils.GetSlicerITKReadWriteAddress(self.resampledVolume.GetName()))
     fileName = "quarterVolume.nii.gz"
     sitk.WriteImage(img, str(os.path.join(dockerVolumePath, fileName)))
     #-----------------------------------
-
     logging.info('Processing started')
     cmd = list()
     cmd.append(dockerPath)
@@ -294,11 +308,24 @@ class DockerVesselSegLogic(ScriptedLoadableModuleLogic):
         print "no line"
         break
       print(line)
-    #outputImage = sitk.ReadImage(os.path.join(dockerVolumePath, "Case1__niftynet_out.nii.gz"))
-    #sitkUtils.PushToSlicer(outputImage, "niftyOutput", 0, True)
-    imageCollection = slicer.mrmlScene.GetNodesByClassByName("vtkMRMLScalarVolumeNode", "niftyOutput")
-    if imageCollection:
-      niftyOutputNode = imageCollection.GetItemAsObject(0)
+    slicer.app.processEvents()
+    successful, probabilityMap = slicer.util.loadVolume(os.path.join(dockerVolumePath, "Case1__niftynet_out.nii.gz"), returnNode = True)
+    if successful and probabilityMap:
+      inputVolumeSpacing = probabilityMap.GetSpacing()
+      spacing = (inputVolumeSpacing[0] * self.DOCKERVOLUMEDIMENSION[0] / oriVolumeDim[0] , \
+                 inputVolumeSpacing[1] * self.DOCKERVOLUMEDIMENSION[1] / oriVolumeDim[1] , \
+                 inputVolumeSpacing[2] * self.DOCKERVOLUMEDIMENSION[2] / oriVolumeDim[2] )
+      probabilityMap_resampled = self.ResampleVolume(probabilityMap, spacing, resampledVolume=None)
+      probabilityMap_resampled.SetName("ProbabilityMap_Resampled")
+      slicer.mrmlScene.AddNode(probabilityMap_resampled)
+      inputVolume.SetAttribute(self.REL_PROBABLITYMAP, probabilityMap_resampled.GetID())
+    logging.info('Processing completed')
+    qt.QApplication.restoreOverrideCursor()
+    return True
+
+  def createModelWithThreshold(self, inputVolume, outputModel):
+    if inputVolume and inputVolume.GetAttribute(self.REL_PROBABLITYMAP):
+      niftyOutputNode = slicer.mrmlScene.GetNodeByID(inputVolume.GetAttribute(self.REL_PROBABLITYMAP))
       if niftyOutputNode:
         matrix = vtk.vtkMatrix4x4()
         inputVolume.GetIJKToRASMatrix(matrix)
@@ -314,10 +341,6 @@ class DockerVesselSegLogic(ScriptedLoadableModuleLogic):
         grayMaker = slicer.modules.grayscalemodelmaker
         slicer.cli.run(grayMaker, None, parameters, wait_for_completion=True)
 
-    logging.info('Processing completed')
-
-    return True
-
   def inverseVTKImage(self, inputImageData):
     imgvtk = vtk.vtkImageData()
     imgvtk.DeepCopy(inputImageData)
@@ -330,6 +353,20 @@ class DockerVesselSegLogic(ScriptedLoadableModuleLogic):
     invertedImageNode = slicer.mrmlScene.CreateNodeByClass("vtkMRMLScalarVolumeNode")
     invertedImageNode.SetAndObserveImageData(subtractFilter.GetOutput())
     return invertedImageNode
+
+  def ResampleVolume(self, inputVolume, pixelSpacing, resampledVolume=None):
+    parameters = {}
+    parameters["InputVolume"] = inputVolume.GetID()
+    parameters["outputPixelSpacing"] = "%.5f,%.5f,%.5f" % pixelSpacing
+    if resampledVolume is None:
+      resampledVolume = slicer.mrmlScene.CreateNodeByClass("vtkMRMLScalarVolumeNode")
+      slicer.mrmlScene.AddNode(resampledVolume)
+    resampledVolume.SetName("ResampledVolume")
+    parameters["OutputVolume"] = resampledVolume.GetID()
+    resampleModule = slicer.modules.resamplescalarvolume
+    slicer.cli.run(resampleModule, None, parameters, wait_for_completion=True)
+    slicer.app.processEvents()
+    return resampledVolume
 
 class DockerVesselSegTest(ScriptedLoadableModuleTest):
   """
